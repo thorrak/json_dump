@@ -1,0 +1,47 @@
+[Unit]
+Description=JSON Dump Web Application
+Documentation=https://github.com/your-username/json_dump
+After=network.target
+
+[Service]
+Type=notify
+User=json_dump
+Group=json_dump
+
+# Application directory
+WorkingDirectory=/opt/json_dump
+
+# Environment variables
+Environment="JSON_DUMP_DIR=/var/lib/json_dump"
+Environment="JSON_DUMP_MAX_SIZE=1048576"
+
+# Start command
+ExecStart=/opt/json_dump/venv/bin/gunicorn -c gunicorn.conf.py app:app
+
+# Reload command (graceful restart)
+ExecReload=/bin/kill -s HUP $MAINPID
+
+# Stop command
+ExecStop=/bin/kill -s TERM $MAINPID
+
+# Restart policy
+Restart=on-failure
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/json_dump
+
+# Resource limits
+LimitNOFILE=65536
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=json_dump
+
+[Install]
+WantedBy=multi-user.target

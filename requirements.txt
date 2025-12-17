@@ -1,0 +1,7 @@
+# JSON Dump - Python Dependencies
+
+# Web framework
+flask>=3.0.0
+
+# Production WSGI server
+gunicorn>=21.0.0
