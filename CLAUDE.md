@@ -55,14 +55,16 @@ python app.py
 gunicorn -c gunicorn.conf.py app:app
 ```
 
-## Deployment Checklist
-- [ ] Create system user for the service
-- [ ] Create data directory with proper permissions
-- [ ] Install Python dependencies in virtualenv
-- [ ] Configure systemd service
-- [ ] Configure Nginx reverse proxy
-- [ ] Enable and start services
-- [ ] Test endpoint
+## Deployment
+
+Use the automated installation script for production deployment:
+
+```bash
+# Edit install.sh to set your repository URL, then:
+sudo ./install.sh
+```
+
+The script handles all deployment steps automatically and verifies the installation.
 
 ## Project Files
 
@@ -71,9 +73,10 @@ gunicorn -c gunicorn.conf.py app:app
 | `app.py` | Main Flask application |
 | `gunicorn.conf.py` | Production Gunicorn settings |
 | `requirements.txt` | Python dependencies |
+| `install.sh` | Automated installation script for production |
 | `README.md` | Full documentation with installation guide |
-| `deploy/json_dump.service` | Systemd service file |
-| `deploy/nginx_simple.conf` | Simple Nginx configuration |
+| `deploy/json_dump.service` | Systemd service file (reference) |
+| `deploy/nginx_simple.conf` | Simple Nginx configuration (reference) |
 | `deploy/nginx.conf` | Advanced Nginx configuration |
 | `deploy/nginx_location.conf` | Reusable location block |
 

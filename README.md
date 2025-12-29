@@ -68,86 +68,109 @@ Health check endpoint for load balancers and monitoring.
 }
 ```
 
-## Production Installation on Ubuntu/Debian with Nginx
+## Production Installation on Ubuntu/Debian
 
-### 1. Install System Dependencies
+### Automated Installation (Recommended)
+
+Use the provided installation script for a complete, automated setup:
+
+```bash
+# 1. Download the installation script (or clone the repo)
+wget https://raw.githubusercontent.com/your-username/json_dump/main/install.sh
+chmod +x install.sh
+
+# 2. Edit the script to set your repository URL
+nano install.sh
+# Change REPO_URL at the top to point to your repository
+
+# 3. Run as root
+sudo ./install.sh
+```
+
+The script will:
+- Install all system dependencies (Python, Nginx, etc.)
+- Create a dedicated service user and group
+- Clone and deploy the application
+- Configure systemd and Nginx
+- Verify the installation with endpoint tests
+
+### Manual Installation
+
+If you prefer manual installation, follow these steps:
+
+<details>
+<summary>Click to expand manual installation steps</summary>
+
+#### 1. Install System Dependencies
 
 ```bash
 sudo apt update
-sudo apt install -y python3 python3-venv python3-pip nginx
+sudo apt install -y python3 python3-venv python3-pip nginx git
 ```
 
-### 2. Create System User
+#### 2. Create System User
 
 ```bash
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin json_dump
+sudo groupadd --system json_dump
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin -g json_dump json_dump
 ```
 
-### 3. Create Application Directory
+#### 3. Create Directories
 
 ```bash
 sudo mkdir -p /opt/json_dump
-sudo chown json_dump:json_dump /opt/json_dump
-```
-
-### 4. Create Data Directory
-
-```bash
 sudo mkdir -p /var/lib/json_dump
-sudo chown json_dump:json_dump /var/lib/json_dump
+sudo chown json_dump:json_dump /opt/json_dump /var/lib/json_dump
 sudo chmod 750 /var/lib/json_dump
 ```
 
-### 5. Deploy Application
+#### 4. Deploy Application
 
 ```bash
+# Clone repository
+git clone https://github.com/your-username/json_dump.git /tmp/json_dump
+
 # Copy application files
-sudo cp app.py gunicorn.conf.py requirements.txt /opt/json_dump/
+sudo cp /tmp/json_dump/app.py /opt/json_dump/
+sudo cp /tmp/json_dump/gunicorn.conf.py /opt/json_dump/
+sudo cp /tmp/json_dump/requirements.txt /opt/json_dump/
 
-# Create virtual environment
-sudo -u json_dump python3 -m venv /opt/json_dump/venv
+# Create virtual environment and install dependencies
+sudo python3 -m venv /opt/json_dump/venv
+sudo /opt/json_dump/venv/bin/pip install -r /opt/json_dump/requirements.txt
 
-# Install dependencies
-sudo -u json_dump /opt/json_dump/venv/bin/pip install -r /opt/json_dump/requirements.txt
+# Set ownership
+sudo chown -R json_dump:json_dump /opt/json_dump
 ```
 
-### 6. Configure Systemd
+#### 5. Configure Systemd
 
 ```bash
-# Copy service file
-sudo cp deploy/json_dump.service /etc/systemd/system/
-
-# Reload systemd
-sudo systemctl daemon-reload
+# Copy and edit service file
+sudo cp /tmp/json_dump/deploy/json_dump.service /etc/systemd/system/
 
 # Enable and start service
+sudo systemctl daemon-reload
 sudo systemctl enable json_dump
 sudo systemctl start json_dump
-
-# Check status
-sudo systemctl status json_dump
 ```
 
-### 7. Configure Nginx
+#### 6. Configure Nginx
 
 ```bash
 # Copy Nginx configuration
-sudo cp deploy/nginx_simple.conf /etc/nginx/sites-available/json_dump
-
-# Enable site
+sudo cp /tmp/json_dump/deploy/nginx_simple.conf /etc/nginx/sites-available/json_dump
 sudo ln -s /etc/nginx/sites-available/json_dump /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
 
-# Remove default site (optional)
-sudo rm /etc/nginx/sites-enabled/default
-
-# Test configuration
+# Test and reload
 sudo nginx -t
-
-# Reload Nginx
 sudo systemctl reload nginx
 ```
 
-### 8. Test the Installation
+</details>
+
+### Test the Installation
 
 ```bash
 # Test health endpoint
@@ -156,7 +179,7 @@ curl http://localhost/health
 # Test dump endpoint
 curl -X POST http://localhost/dump \
   -H "Content-Type: application/json" \
-  -d '{"test": "data", "timestamp": "2025-12-17"}'
+  -d '{"test": "data"}'
 
 # Check the saved files
 sudo ls -la /var/lib/json_dump/
@@ -238,11 +261,12 @@ json_dump/
 ├── app.py                    # Flask application
 ├── gunicorn.conf.py          # Gunicorn configuration
 ├── requirements.txt          # Python dependencies
+├── install.sh                # Automated installation script
 ├── README.md                 # This file
 ├── CLAUDE.md                 # Development notes
 └── deploy/
-    ├── json_dump.service     # Systemd service file
-    ├── nginx_simple.conf     # Simple Nginx configuration
+    ├── json_dump.service     # Systemd service file (reference)
+    ├── nginx_simple.conf     # Simple Nginx configuration (reference)
     ├── nginx.conf            # Advanced Nginx configuration
     └── nginx_location.conf   # Location block (for advanced config)
 ```
