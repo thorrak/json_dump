@@ -32,13 +32,13 @@ def generate_filename(extension="json"):
     return f"{timestamp}_{unique_id}.{extension}"
 
 
-@app.route("/dump", methods=["POST"])
+@app.route("/dump", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 def dump_json():
     """
     Receive a payload and write it to a file.
 
-    Accepts any content type. JSON payloads are pretty-printed,
-    other content types are saved as raw data.
+    Accepts any content type and HTTP method. JSON payloads are pretty-printed,
+    form data is converted to JSON, other content types are saved as raw data.
 
     Returns the filename of the created file.
     """
@@ -47,9 +47,11 @@ def dump_json():
 
     content_type = request.content_type or "application/octet-stream"
     is_json_content = False
+    is_form_data = False
     data = None
+    raw_data = None
 
-    # Try to parse as JSON if content type suggests it, or try anyway
+    # Try to parse as JSON if content type suggests it
     if request.is_json:
         try:
             data = request.get_json(force=False)
@@ -57,14 +59,51 @@ def dump_json():
         except Exception:
             pass
 
-    # If not JSON content type, still try to parse as JSON (in case client didn't set header)
+    # If not JSON, check for form data (application/x-www-form-urlencoded or multipart/form-data)
+    if not is_json_content and request.form:
+        data = {
+            "_type": "form_data",
+            "_method": request.method,
+            "_content_type": content_type,
+            "fields": dict(request.form)
+        }
+        # Include file metadata if present (not file contents for security)
+        if request.files:
+            data["files"] = {
+                name: {
+                    "filename": f.filename,
+                    "content_type": f.content_type,
+                    "size": f.content_length
+                }
+                for name, f in request.files.items()
+            }
+        is_form_data = True
+        is_json_content = True  # We'll save it as JSON
+
+    # Check for query parameters (useful for GET requests)
+    if not is_json_content and not is_form_data and request.args:
+        data = {
+            "_type": "query_params",
+            "_method": request.method,
+            "_content_type": content_type,
+            "params": dict(request.args)
+        }
+        is_json_content = True
+
+    # If still nothing, try to parse raw body as JSON
     if not is_json_content and request.data:
         try:
             data = json.loads(request.data)
             is_json_content = True
         except (json.JSONDecodeError, UnicodeDecodeError):
-            pass
+            # Not JSON, treat as raw data
+            raw_data = request.data
 
+    # If we still have nothing, grab raw data
+    if not is_json_content and not raw_data:
+        raw_data = request.data
+
+    # Determine what to save
     if is_json_content and data is not None:
         # Save as pretty-printed JSON
         filename = generate_filename("json")
@@ -75,12 +114,8 @@ def dump_json():
             os.chmod(filepath, 0o640)
         except OSError as e:
             return jsonify({"error": f"Failed to write file: {str(e)}"}), 500
-    else:
+    elif raw_data:
         # Save raw data
-        raw_data = request.data
-        if not raw_data:
-            return jsonify({"error": "Empty payload"}), 400
-
         filename = generate_filename("dat")
         filepath = DATA_DIR / filename
         try:
@@ -89,13 +124,17 @@ def dump_json():
             os.chmod(filepath, 0o640)
         except OSError as e:
             return jsonify({"error": f"Failed to write file: {str(e)}"}), 500
+    else:
+        return jsonify({"error": "Empty payload"}), 400
 
     return jsonify({
         "success": True,
         "filename": filename,
         "size": filepath.stat().st_size,
         "content_type": content_type,
-        "parsed_as_json": is_json_content
+        "method": request.method,
+        "parsed_as_json": is_json_content,
+        "was_form_data": is_form_data
     }), 201
 
 
