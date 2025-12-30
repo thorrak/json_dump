@@ -516,10 +516,10 @@ verify_installation() {
         -H "Content-Type: application/json" \
         -d '{"test": "installation_verification", "timestamp": "'$(date -Iseconds)'"}' 2>/dev/null)
 
-    if echo "$dump_response" | grep -q '"success": true'; then
+    if echo "$dump_response" | grep -qE '"success":\s*true'; then
         log_success "Dump endpoint working correctly"
         local filename
-        filename=$(echo "$dump_response" | grep -o '"filename": "[^"]*"' | cut -d'"' -f4)
+        filename=$(echo "$dump_response" | grep -oE '"filename":\s*"[^"]*"' | cut -d'"' -f4)
         log_info "Test file created: $filename"
     else
         log_error "Dump endpoint test failed"
