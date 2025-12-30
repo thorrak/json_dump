@@ -25,54 +25,77 @@ def ensure_data_dir():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def generate_filename():
+def generate_filename(extension="json"):
     """Generate a unique filename with timestamp and UUID."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     unique_id = uuid.uuid4().hex[:8]
-    return f"{timestamp}_{unique_id}.json"
+    return f"{timestamp}_{unique_id}.{extension}"
 
 
 @app.route("/dump", methods=["POST"])
 def dump_json():
     """
-    Receive a JSON payload and write it to a file.
+    Receive a payload and write it to a file.
+
+    Accepts any content type. JSON payloads are pretty-printed,
+    other content types are saved as raw data.
 
     Returns the filename of the created file.
     """
-    # Check content type
-    if not request.is_json:
-        return jsonify({"error": "Content-Type must be application/json"}), 400
-
-    # Get the JSON data
-    try:
-        data = request.get_json(force=False)
-    except Exception as e:
-        return jsonify({"error": f"Invalid JSON: {str(e)}"}), 400
-
-    if data is None:
-        return jsonify({"error": "Empty or invalid JSON payload"}), 400
-
     # Ensure data directory exists
     ensure_data_dir()
 
-    # Generate filename and write
-    filename = generate_filename()
-    filepath = DATA_DIR / filename
+    content_type = request.content_type or "application/octet-stream"
+    is_json_content = False
+    data = None
 
-    try:
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+    # Try to parse as JSON if content type suggests it, or try anyway
+    if request.is_json:
+        try:
+            data = request.get_json(force=False)
+            is_json_content = True
+        except Exception:
+            pass
 
-        # Set restrictive permissions (owner read/write, group read)
-        os.chmod(filepath, 0o640)
+    # If not JSON content type, still try to parse as JSON (in case client didn't set header)
+    if not is_json_content and request.data:
+        try:
+            data = json.loads(request.data)
+            is_json_content = True
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
 
-    except OSError as e:
-        return jsonify({"error": f"Failed to write file: {str(e)}"}), 500
+    if is_json_content and data is not None:
+        # Save as pretty-printed JSON
+        filename = generate_filename("json")
+        filepath = DATA_DIR / filename
+        try:
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            os.chmod(filepath, 0o640)
+        except OSError as e:
+            return jsonify({"error": f"Failed to write file: {str(e)}"}), 500
+    else:
+        # Save raw data
+        raw_data = request.data
+        if not raw_data:
+            return jsonify({"error": "Empty payload"}), 400
+
+        filename = generate_filename("dat")
+        filepath = DATA_DIR / filename
+        try:
+            with open(filepath, "wb") as f:
+                f.write(raw_data)
+            os.chmod(filepath, 0o640)
+        except OSError as e:
+            return jsonify({"error": f"Failed to write file: {str(e)}"}), 500
 
     return jsonify({
         "success": True,
         "filename": filename,
-        "size": filepath.stat().st_size
+        "size": filepath.stat().st_size,
+        "content_type": content_type,
+        "parsed_as_json": is_json_content
     }), 201
 
 
