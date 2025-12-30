@@ -29,6 +29,9 @@ SERVICE_GROUP="json_dump"
 # Application settings
 MAX_PAYLOAD_SIZE="1048576"  # 1MB in bytes
 
+# Upgrade detection (set during runtime)
+IS_UPGRADE=false
+
 #=============================================================================
 # UTILITY FUNCTIONS
 #=============================================================================
@@ -176,17 +179,37 @@ create_service_user() {
     fi
 }
 
+detect_upgrade() {
+    log_step "Detecting installation type"
+
+    if [[ -d "$APP_DIR" ]] && [[ -f "$APP_DIR/app.py" ]]; then
+        IS_UPGRADE=true
+        log_info "Existing installation detected at $APP_DIR"
+        log_success "Running in UPGRADE mode"
+    else
+        IS_UPGRADE=false
+        log_success "Running in FRESH INSTALL mode"
+    fi
+}
+
 setup_directories() {
     log_step "Setting up directories"
 
     # Application directory
     if [[ -d "$APP_DIR" ]]; then
-        log_warning "Application directory $APP_DIR already exists"
-        log_info "Backing up to ${APP_DIR}.backup.$(date +%Y%m%d%H%M%S)"
-        mv "$APP_DIR" "${APP_DIR}.backup.$(date +%Y%m%d%H%M%S)"
+        if [[ "$IS_UPGRADE" == true ]]; then
+            log_info "Keeping existing application directory: $APP_DIR"
+        else
+            log_warning "Application directory $APP_DIR already exists"
+            log_info "Backing up to ${APP_DIR}.backup.$(date +%Y%m%d%H%M%S)"
+            mv "$APP_DIR" "${APP_DIR}.backup.$(date +%Y%m%d%H%M%S)"
+            mkdir -p "$APP_DIR"
+            log_success "Created application directory: $APP_DIR"
+        fi
+    else
+        mkdir -p "$APP_DIR"
+        log_success "Created application directory: $APP_DIR"
     fi
-    mkdir -p "$APP_DIR"
-    log_success "Created application directory: $APP_DIR"
 
     # Data directory
     if [[ ! -d "$DATA_DIR" ]]; then
@@ -209,57 +232,105 @@ setup_directories() {
 #=============================================================================
 
 clone_repository() {
-    log_step "Cloning application repository"
+    if [[ "$IS_UPGRADE" == true ]]; then
+        log_step "Updating application from repository"
+    else
+        log_step "Cloning application repository"
+    fi
 
-    log_info "Cloning from: $REPO_URL (branch: $REPO_BRANCH)"
+    log_info "Repository: $REPO_URL (branch: $REPO_BRANCH)"
 
-    # Clone to a temporary location first
     local temp_dir
-    temp_dir=$(mktemp -d)
+    local source_dir
 
-    if ! git clone --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" "$temp_dir" 2>&1; then
-        log_error "Failed to clone repository from $REPO_URL"
-        rm -rf "$temp_dir"
-        exit 1
+    # Check if APP_DIR has a git repo we can pull from
+    if [[ "$IS_UPGRADE" == true ]] && [[ -d "$APP_DIR/.git" ]]; then
+        log_info "Pulling latest changes from git..."
+
+        # Fetch and reset to match remote (handles force pushes too)
+        if ! (cd "$APP_DIR" && git fetch origin "$REPO_BRANCH" && git reset --hard "origin/$REPO_BRANCH") 2>&1; then
+            log_warning "Git pull failed, falling back to fresh clone"
+            # Fall through to clone method
+        else
+            log_success "Git pull successful"
+            source_dir="$APP_DIR"
+        fi
+    fi
+
+    # Clone fresh if we don't have source_dir yet
+    if [[ -z "${source_dir:-}" ]]; then
+        temp_dir=$(mktemp -d)
+
+        if ! git clone --branch "$REPO_BRANCH" "$REPO_URL" "$temp_dir" 2>&1; then
+            log_error "Failed to clone repository from $REPO_URL"
+            rm -rf "$temp_dir"
+            exit 1
+        fi
+
+        source_dir="$temp_dir"
     fi
 
     # Verify required files exist
     for file in app.py gunicorn.conf.py requirements.txt; do
-        if [[ ! -f "$temp_dir/$file" ]]; then
+        if [[ ! -f "$source_dir/$file" ]]; then
             log_error "Required file '$file' not found in repository"
-            rm -rf "$temp_dir"
+            [[ -n "${temp_dir:-}" ]] && rm -rf "$temp_dir"
             exit 1
         fi
     done
 
-    # Copy application files
-    cp "$temp_dir/app.py" "$APP_DIR/"
-    cp "$temp_dir/gunicorn.conf.py" "$APP_DIR/"
-    cp "$temp_dir/requirements.txt" "$APP_DIR/"
-
-    # Cleanup
-    rm -rf "$temp_dir"
+    # Copy application files (only if we cloned to temp)
+    if [[ -n "${temp_dir:-}" ]]; then
+        # Remove old .git if exists and copy new repo
+        rm -rf "$APP_DIR/.git"
+        cp -r "$temp_dir/.git" "$APP_DIR/"
+        cp "$temp_dir/app.py" "$APP_DIR/"
+        cp "$temp_dir/gunicorn.conf.py" "$APP_DIR/"
+        cp "$temp_dir/requirements.txt" "$APP_DIR/"
+        rm -rf "$temp_dir"
+    fi
 
     # Set ownership
     chown -R "$SERVICE_USER:$SERVICE_GROUP" "$APP_DIR"
 
-    log_success "Application files deployed to $APP_DIR"
+    # Show current version
+    local current_commit
+    current_commit=$(cd "$APP_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    log_success "Application files deployed to $APP_DIR (commit: $current_commit)"
 
     # List deployed files
     log_info "Deployed files:"
-    ls -la "$APP_DIR/"
+    ls -la "$APP_DIR/" | grep -v "^d.*\.git$" | grep -v "^total"
 }
 
 setup_python_environment() {
     log_step "Setting up Python environment"
 
-    log_info "Creating virtual environment..."
-    python3 -m venv "$APP_DIR/venv"
-    log_success "Virtual environment created"
+    if [[ -d "$APP_DIR/venv" ]]; then
+        if [[ "$IS_UPGRADE" == true ]]; then
+            log_info "Using existing virtual environment"
+        else
+            log_warning "Removing stale virtual environment..."
+            rm -rf "$APP_DIR/venv"
+            log_info "Creating virtual environment..."
+            python3 -m venv "$APP_DIR/venv"
+            log_success "Virtual environment created"
+        fi
+    else
+        log_info "Creating virtual environment..."
+        python3 -m venv "$APP_DIR/venv"
+        log_success "Virtual environment created"
+    fi
 
-    log_info "Installing Python dependencies..."
+    log_info "Updating pip..."
     "$APP_DIR/venv/bin/pip" install --quiet --upgrade pip
-    "$APP_DIR/venv/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
+
+    if [[ "$IS_UPGRADE" == true ]]; then
+        log_info "Updating Python dependencies..."
+    else
+        log_info "Installing Python dependencies..."
+    fi
+    "$APP_DIR/venv/bin/pip" install --quiet --upgrade -r "$APP_DIR/requirements.txt"
     log_success "Python dependencies installed"
 
     # Verify Flask and Gunicorn
@@ -339,9 +410,14 @@ EOF
     systemctl enable json_dump --quiet
     log_success "Service enabled for auto-start"
 
-    # Start service
-    log_info "Starting json_dump service..."
-    systemctl start json_dump
+    # Start or restart service
+    if [[ "$IS_UPGRADE" == true ]] && systemctl is-active --quiet json_dump; then
+        log_info "Restarting json_dump service..."
+        systemctl restart json_dump
+    else
+        log_info "Starting json_dump service..."
+        systemctl start json_dump
+    fi
 
     # Wait for service to be ready
     sleep 2
@@ -545,15 +621,23 @@ verify_installation() {
 #=============================================================================
 
 print_summary() {
+    local current_commit
+    current_commit=$(cd "$APP_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
     echo ""
     echo -e "${GREEN}${BOLD}=============================================${NC}"
-    echo -e "${GREEN}${BOLD}  Installation Complete!${NC}"
+    if [[ "$IS_UPGRADE" == true ]]; then
+        echo -e "${GREEN}${BOLD}  Upgrade Complete!${NC}"
+    else
+        echo -e "${GREEN}${BOLD}  Installation Complete!${NC}"
+    fi
     echo -e "${GREEN}${BOLD}=============================================${NC}"
     echo ""
     echo -e "${BOLD}Application Details:${NC}"
     echo "  - App Directory:  $APP_DIR"
     echo "  - Data Directory: $DATA_DIR"
     echo "  - Service User:   $SERVICE_USER"
+    echo "  - Version:        $current_commit"
     echo ""
     echo -e "${BOLD}Endpoints:${NC}"
     echo "  - Health Check:   http://<server-ip>/health"
@@ -587,6 +671,7 @@ main() {
     echo ""
 
     check_prerequisites
+    detect_upgrade
     install_packages
     create_service_user
     setup_directories
