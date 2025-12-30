@@ -15,7 +15,7 @@ set -euo pipefail
 #=============================================================================
 
 # Git repository URL - modify this to point to your repository
-REPO_URL="https://github.com/your-username/json_dump.git"
+REPO_URL="https://github.com/thorrak/json_dump.git"
 REPO_BRANCH="main"
 
 # Installation paths
